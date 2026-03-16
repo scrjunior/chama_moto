@@ -6,15 +6,15 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await context.params;
-    const taxistaId = String(id ?? "").trim();
+    const { id: taxistaId } = await context.params;
+    const id = String(taxistaId ?? "").trim();
 
-    if (!taxistaId) {
+    if (!id) {
       return NextResponse.json({ error: "taxistaId inválido." }, { status: 400 });
     }
 
     const viagens = await prisma.viagem.findMany({
-      where: { taxistaId, status: "PENDENTE" },
+      where: { taxistaId: id, status: "PENDENTE" },
       orderBy: { criadoEm: "desc" },
       include: {
         passageiro: { select: { id: true, nome: true, email: true } },
