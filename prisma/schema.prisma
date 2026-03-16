@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  
+}
+
+model moto {
+  id        String   @id @default(cuid())
+  nomeMoto  String
+  matricula String   @unique(map: "Moto_matricula_key")
+  criadoEm  DateTime @default(now())
+  taxistaId String   @unique(map: "Moto_taxistaId_key")
+  taxista   taxista  @relation(fields: [taxistaId], references: [id], map: "Moto_taxistaId_fkey")
+}
+
+model passageiro {
+  id       String   @id @default(cuid())
+  nome     String
+  email    String   @unique(map: "Passageiro_email_key")
+  senha    String
+  criadoEm DateTime @default(now())
+  viagem   viagem[]
+}
+
+model taxista {
+  id         String    @id @default(cuid())
+  nome       String
+  apelido    String
+  documento  String    @unique(map: "Taxista_documento_key")
+  email      String    @unique(map: "Taxista_email_key")
+  senha      String
+  criadoEm   DateTime  @default(now())
+  disponivel Boolean   @default(false)
+  accuracy   Float?
+  lastGpsAt  DateTime?
+  lat        Float?
+  lng        Float?
+  moto       moto?
+  viagem     viagem[]
+}
+
+model viagem {
+  id           String        @id @default(cuid())
+  status       viagem_status @default(PENDENTE)
+  origemTexto  String
+  destinoTexto String
+  criadoEm     DateTime      @default(now())
+  passageiroId String
+  taxistaId    String
+  passageiro   passageiro    @relation(fields: [passageiroId], references: [id], map: "Viagem_passageiroId_fkey")
+  taxista      taxista       @relation(fields: [taxistaId], references: [id], map: "Viagem_taxistaId_fkey")
+
+  @@index([passageiroId], map: "Viagem_passageiroId_idx")
+  @@index([status], map: "Viagem_status_idx")
+  @@index([taxistaId], map: "Viagem_taxistaId_idx")
+}
+
+enum viagem_status {
+  PENDENTE
+  ACEITA
+  REJEITADA
+  CONCLUIDA
+  CANCELADA
+}

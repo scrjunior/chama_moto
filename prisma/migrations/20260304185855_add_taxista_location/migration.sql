@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE `taxista` ADD COLUMN `accuracy` DOUBLE NULL,
+    ADD COLUMN `lastGpsAt` DATETIME(3) NULL,
+    ADD COLUMN `lat` DOUBLE NULL,
+    ADD COLUMN `lng` DOUBLE NULL;
