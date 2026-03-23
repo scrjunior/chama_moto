@@ -32,6 +32,19 @@ function urlBase64ToUint8Array(base64String: string) {
   return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
 }
 
+function traduzirErroGeolocation(err: GeolocationPositionError) {
+  switch (err.code) {
+    case 1:
+      return "Permissão de localização negada.";
+    case 2:
+      return "Não foi possível obter a localização do dispositivo.";
+    case 3:
+      return "A localização demorou demais para responder. Tente ir para um local aberto ou ativar GPS de alta precisão.";
+    default:
+      return err.message || "Erro desconhecido de localização.";
+  }
+}
+
 export default function TaxistaHomePage() {
   const router = useRouter();
 
@@ -56,7 +69,7 @@ export default function TaxistaHomePage() {
   // Evitar spam de notification (só dispara quando detecta ids novos)
   const lastNotifiedAtRef = useRef<number>(0);
 
-  // ✅ GPS do taxista (watchPosition)
+  // GPS do taxista (watchPosition)
   const gpsWatchIdRef = useRef<number | null>(null);
   const lastGpsSentAtRef = useRef<number>(0);
 
@@ -73,7 +86,6 @@ export default function TaxistaHomePage() {
     router.push("/taxista");
   }
 
-  // ✅ Enviar localização atual ao servidor
   async function enviarLocalizacao(lat: number, lng: number, accuracy?: number | null) {
     const id = localStorage.getItem("taxistaId");
     if (!id) return;
@@ -86,6 +98,8 @@ export default function TaxistaHomePage() {
   }
 
   function pararGps() {
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) return;
+
     if (gpsWatchIdRef.current != null) {
       navigator.geolocation.clearWatch(gpsWatchIdRef.current);
       gpsWatchIdRef.current = null;
@@ -93,48 +107,58 @@ export default function TaxistaHomePage() {
   }
 
   function iniciarGps() {
-  if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
-    alert("Este dispositivo/navegador não suporta GPS.");
-    return;
+    if (typeof navigator === "undefined" || !("geolocation" in navigator)) {
+      alert("Este dispositivo/navegador não suporta GPS.");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        enviarLocalizacao(
+          pos.coords.latitude,
+          pos.coords.longitude,
+          pos.coords.accuracy
+        ).catch(() => {});
+
+        gpsWatchIdRef.current = navigator.geolocation.watchPosition(
+          (p) => {
+            const now = Date.now();
+            if (now - lastGpsSentAtRef.current < 5000) return;
+            lastGpsSentAtRef.current = now;
+
+            enviarLocalizacao(
+              p.coords.latitude,
+              p.coords.longitude,
+              p.coords.accuracy
+            ).catch(() => {});
+          },
+          (err) => {
+            console.error("watchPosition error:", err.code, err.message);
+            alert(traduzirErroGeolocation(err));
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 30000,
+            maximumAge: 10000,
+          }
+        );
+      },
+      (err) => {
+        console.error("getCurrentPosition error:", err.code, err.message);
+        alert(traduzirErroGeolocation(err));
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 30000,
+        maximumAge: 10000,
+      }
+    );
   }
-
-  // Primeiro pede 1 posição. Se negar, não tenta watchPosition.
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      enviarLocalizacao(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy).catch(() => {});
-
-      // Só depois de ter permissão, começa o watch
-      gpsWatchIdRef.current = navigator.geolocation.watchPosition(
-        (p) => {
-          const now = Date.now();
-          if (now - lastGpsSentAtRef.current < 5000) return;
-          lastGpsSentAtRef.current = now;
-
-          enviarLocalizacao(p.coords.latitude, p.coords.longitude, p.coords.accuracy).catch(() => {});
-        },
-        (err) => {
-          alert("Erro GPS: " + err.message);
-        },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 2000 }
-      );
-    },
-    (err) => {
-      // ✅ Uma mensagem só (e com instrução)
-      alert(
-        "A localização foi bloqueada.\n\n" +
-          "No Chrome: toque no cadeado (ao lado do link) → Permissões do site → Localização → Permitir.\n" +
-          "Depois recarregue a página."
-      );
-    },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-  );
-}
 
   function tocarSomChamada() {
     const a = audioRef.current;
     if (!a) return;
 
-    // se o browser ainda não liberou áudio, não toca
     if (!audioUnlockedRef.current) return;
 
     try {
@@ -163,7 +187,6 @@ export default function TaxistaHomePage() {
       if (!("Notification" in window)) return;
       if (Notification.permission !== "granted") return;
 
-      // anti-spam: no máximo 1 notificação por ~2s
       const now = Date.now();
       if (now - lastNotifiedAtRef.current < 2000) return;
       lastNotifiedAtRef.current = now;
@@ -173,8 +196,6 @@ export default function TaxistaHomePage() {
 
       new Notification(titulo, {
         body,
-        // icon: "/icon.png",
-        // badge: "/icon.png",
       });
 
       vibrar();
@@ -199,14 +220,13 @@ export default function TaxistaHomePage() {
       if (!("serviceWorker" in navigator)) return;
       if (!("PushManager" in window)) return;
 
-      // Registra o SW
       const reg = await navigator.serviceWorker.register("/sw.js");
 
-      // Permissão de notificação
-      const perm = await Notification.requestPermission().catch(() => "default" as NotificationPermission);
+      const perm = await Notification.requestPermission().catch(
+        () => "default" as NotificationPermission
+      );
       if (perm !== "granted") return;
 
-      // Subscription
       const existing = await reg.pushManager.getSubscription();
       const sub =
         existing ||
@@ -215,7 +235,6 @@ export default function TaxistaHomePage() {
           applicationServerKey: urlBase64ToUint8Array(pub),
         }));
 
-      // Envia para o backend guardar
       await fetch("/api/push/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -228,9 +247,7 @@ export default function TaxistaHomePage() {
     }
   }
 
-  // Preparar áudio + unlock (necessário pelo browser) + pedir permissão de notificação + setup push
   useEffect(() => {
-    // Caminho do ficheiro em /public
     audioRef.current = new Audio("/sounds/chamada.wav");
     audioRef.current.preload = "auto";
     audioRef.current.volume = 1.0;
@@ -238,14 +255,12 @@ export default function TaxistaHomePage() {
     const unlock = () => {
       audioUnlockedRef.current = true;
 
-      // pede permissão para notificação
       if (typeof window !== "undefined" && "Notification" in window) {
         if (Notification.permission === "default") {
           Notification.requestPermission().catch(() => {});
         }
       }
 
-      // tenta "desbloquear" o áudio (tocar mudo e parar)
       const a = audioRef.current;
       if (a) {
         a.muted = true;
@@ -260,7 +275,6 @@ export default function TaxistaHomePage() {
           });
       }
 
-      // ✅ Após o primeiro gesto do utilizador, registra push (melhor compatibilidade)
       registrarPushParaTaxista().catch(() => {});
 
       window.removeEventListener("click", unlock);
@@ -303,7 +317,6 @@ export default function TaxistaHomePage() {
 
       const list = (data?.viagens || []) as ViagemItem[];
 
-      // Detectar novas viagens (após o primeiro carregamento)
       const newIds = new Set(list.map((v) => v.id));
       const prevIds = prevIdsRef.current;
 
@@ -313,11 +326,7 @@ export default function TaxistaHomePage() {
 
         if (added > 0) {
           setNewCallCount((c) => c + added);
-
-          // 1) tentar tocar som (se estiver desbloqueado)
           tocarSomChamada();
-
-          // 2) notificação do sistema (quando está aberto)
           notificarSistema(added);
         }
       } else {
@@ -358,10 +367,7 @@ export default function TaxistaHomePage() {
         return;
       }
 
-      // Remove da lista (já não é pendente)
       setViagens((prev) => prev.filter((v) => v.id !== viagemId));
-
-      // Atualiza cache de ids (para não considerar como "nova" depois)
       prevIdsRef.current = new Set(viagens.filter((v) => v.id !== viagemId).map((v) => v.id));
     } catch {
       alert("Erro de rede ao atualizar status.");
@@ -400,7 +406,6 @@ export default function TaxistaHomePage() {
     }
   }
 
-  // Carregar taxista + chamadas iniciais
   useEffect(() => {
     const id = localStorage.getItem("taxistaId");
     if (!id) {
@@ -432,7 +437,6 @@ export default function TaxistaHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ GPS liga/desliga conforme o status
   useEffect(() => {
     if (status === "disponivel") iniciarGps();
     else pararGps();
@@ -443,7 +447,6 @@ export default function TaxistaHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // Polling — a cada 1 segundo, mas só se estiver disponível
   useEffect(() => {
     if (status !== "disponivel") return;
 
@@ -455,7 +458,6 @@ export default function TaxistaHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  // Título do browser
   useEffect(() => {
     const base = "Taxista • Chama-Moto";
     if (newCallCount > 0) document.title = `(${newCallCount}) Nova chamada • Chama-Moto`;
@@ -535,7 +537,6 @@ export default function TaxistaHomePage() {
             </div>
           ) : null}
 
-          {/* Status card */}
           <section className="rounded-2xl border border-gray-800 bg-[#111318] p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -580,7 +581,6 @@ export default function TaxistaHomePage() {
             </div>
           </section>
 
-          {/* Chamadas */}
           <section className="mt-4 rounded-2xl border border-gray-800 bg-[#111318] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -611,7 +611,9 @@ export default function TaxistaHomePage() {
             ) : viagens.length === 0 ? (
               <div className="mt-4 rounded-xl border border-dashed border-gray-700 bg-[#0f1117] p-4">
                 <div className="text-sm font-semibold text-gray-200">Nenhuma chamada pendente</div>
-                <div className="text-xs text-gray-500 mt-1">Quando um passageiro solicitar, aparecerá aqui.</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Quando um passageiro solicitar, aparecerá aqui.
+                </div>
               </div>
             ) : (
               <div className="mt-4 space-y-3">
@@ -619,8 +621,12 @@ export default function TaxistaHomePage() {
                   <div key={v.id} className="rounded-2xl border border-gray-800 bg-[#0f1117] p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-gray-100">{v.passageiro?.nome || "Passageiro"}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{new Date(v.criadoEm).toLocaleString()}</div>
+                        <div className="text-sm font-semibold text-gray-100">
+                          {v.passageiro?.nome || "Passageiro"}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          {new Date(v.criadoEm).toLocaleString()}
+                        </div>
                       </div>
 
                       <span className="text-[11px] text-gray-400 border border-gray-800 rounded-full px-2 py-1">
@@ -670,15 +676,19 @@ export default function TaxistaHomePage() {
             )}
           </section>
 
-          {/* Debug opcional: botão para testar push */}
-          {/* <button onClick={testarPush} className="mt-4 text-xs px-3 py-2 rounded-xl bg-[#1a1f2e] border border-gray-800">
+          {/* <button
+            onClick={testarPush}
+            className="mt-4 text-xs px-3 py-2 rounded-xl bg-[#1a1f2e] border border-gray-800"
+          >
             Testar Push {pushReady ? "✅" : "…"}
           </button> */}
         </main>
 
         <nav className="fixed bottom-0 left-0 right-0 border-t border-gray-800 bg-[#111318]/95 backdrop-blur">
           <div className="max-w-md mx-auto px-4 py-3 grid grid-cols-3 gap-2 text-xs">
-            <button className="rounded-xl py-2 bg-yellow-400 text-gray-900 font-semibold">Home</button>
+            <button className="rounded-xl py-2 bg-yellow-400 text-gray-900 font-semibold">
+              Home
+            </button>
 
             <button
               className="rounded-xl py-2 bg-[#1a1f2e] border border-gray-800 text-gray-200 hover:border-gray-700 transition-colors"
