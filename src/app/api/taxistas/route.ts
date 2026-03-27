@@ -25,11 +25,25 @@ export async function GET(req: Request) {
         nome: t.nome,
         apelido: t.apelido,
         disponivel: t.disponivel,
-        moto: t.moto ? { nomeMoto: t.moto.nomeMoto, matricula: t.moto.matricula } : null,
+        lat: t.lat,
+        lng: t.lng,
+        accuracy: t.accuracy,
+        lastGpsAt: t.lastGpsAt,
+        moto: t.moto
+          ? {
+              nomeMoto: t.moto.nomeMoto,
+              matricula: t.moto.matricula,
+            }
+          : null,
       })),
     });
-  } catch {
-    return NextResponse.json({ error: "Erro ao listar taxistas." }, { status: 500 });
+  } catch (error) {
+    console.error("ERRO AO LISTAR TAXISTAS:", error);
+
+    return NextResponse.json(
+      { error: "Erro ao listar taxistas." },
+      { status: 500 }
+    );
   }
 }
 
@@ -68,8 +82,12 @@ export async function POST(req: Request) {
         documento,
         email,
         senha,
-        // disponivel default false
-        moto: { create: { nomeMoto, matricula } },
+        moto: {
+          create: {
+            nomeMoto,
+            matricula,
+          },
+        },
       },
       include: { moto: true },
     });
@@ -84,15 +102,25 @@ export async function POST(req: Request) {
           email: created.email,
           documento: created.documento,
           disponivel: created.disponivel,
+          lat: created.lat,
+          lng: created.lng,
+          accuracy: created.accuracy,
+          lastGpsAt: created.lastGpsAt,
           criadoEm: created.criadoEm,
           moto: created.moto
-            ? { id: created.moto.id, nomeMoto: created.moto.nomeMoto, matricula: created.moto.matricula }
+            ? {
+                id: created.moto.id,
+                nomeMoto: created.moto.nomeMoto,
+                matricula: created.moto.matricula,
+              }
             : null,
         },
       },
       { status: 201 }
     );
-  } catch {
+  } catch (error) {
+    console.error("ERRO AO CADASTRAR TAXISTA:", error);
+
     return NextResponse.json(
       { error: "Não foi possível cadastrar. Email/documento/matrícula podem já existir." },
       { status: 500 }
